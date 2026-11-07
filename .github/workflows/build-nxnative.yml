@@ -1,0 +1,71 @@
+name: Build nxnative IPA on Cloud
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # กดปุ่มรันเองได้จากหน้าเว็บ GitHub
+
+jobs:
+  build-ipa:
+    name: Build Unsigned IPA (nxnative)
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download Xcode Metal Toolchain
+        run: |
+          xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Install System Dependencies via Homebrew
+        run: |
+          brew install xcodegen zstd glslang
+
+      - name: Install Python Dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install lz4 "capstone>=5,<6" fonttools nsz zbic "backports.zstd; python_version < '3.14'"
+
+      - name: Prepare Keys and Game Folder
+        env:
+          PROD_KEYS_BASE64: ${{ secrets.PROD_KEYS_BASE64 }}
+        run: |
+          # 1. สร้างโฟลเดอร์เก็บคีย์จาก GitHub Secrets
+          mkdir -p ~/.switch/keys
+          if [ -n "$PROD_KEYS_BASE64" ]; then
+            echo "$PROD_KEYS_BASE64" | base64 --decode > ~/.switch/keys/prod.keys
+            echo "Successfully loaded prod.keys"
+          else
+            echo "❌ ERROR: PROD_KEYS_BASE64 secret is missing!"
+            exit 1
+          fi
+
+          # 2. จำลองโฟลเดอร์เกม (เปลี่ยนลิงก์ด้านล่างเป็ฯลิงก์ดาวน์โหลดรอมเกมของคุณ หรือปล่อยไว้ถ้าจะทดสอบระบบก่อน)
+          mkdir -p my_game_folder
+          
+          # [ตัวอย่าง] ถ้าคุณมีลิงก์ตรงสำหรับดาวน์โหลดไฟล์ .nsp ชั่วคราวตอนรัน สามารถเอามาwget/curl ตรงนี้ได้:
+          # wget "ลิงก์ไฟล์เกมของคุณ.nsp" -O my_game_folder/game.nsp
+
+      - name: Run Build IPA Script
+        run: |
+          # รันคำสั่งตามรูปแบบใน README ของ nxnative
+          python3 scripts/build_ipa_from_nsp.py my_game_folder -k ~/.switch/keys/prod.keys
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxnative-unsigned-ipa
+          path: |
+            my_game_folder/**/*.ipa
+            **/*.ipa
